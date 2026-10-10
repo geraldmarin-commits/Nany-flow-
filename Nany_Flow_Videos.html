@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#100d16">
+<title>Nany Flow Videos</title>
+<style>
+:root{color-scheme:dark;--bg:#100d16;--card:#1b1624;--purple:#b77aff;--text:#f7f2ff;--muted:#bdb2ca}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#30203f 0,#100d16 52%);font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:var(--text);min-height:100vh;padding:22px;display:flex;justify-content:center}
+main{width:100%;max-width:460px;text-align:center;margin:auto}.logo{width:78px;height:78px;margin:0 auto 16px;border-radius:24px;background:linear-gradient(135deg,#d3a3ff,#7736b6);display:grid;place-items:center;font-weight:900;font-size:30px;box-shadow:0 12px 36px #0006}
+h1{font-size:27px;margin:0 0 7px}p{color:var(--muted);line-height:1.5}.card{background:#1b1624ed;border:1px solid #ffffff17;border-radius:20px;padding:20px;margin-top:17px;text-align:left}
+.status{font-size:20px;font-weight:800;margin:0 0 10px}.small{font-size:12px;color:#9e92ad}
+button{display:block;width:100%;border:0;border-radius:14px;padding:15px;margin-top:12px;font-size:16px;font-weight:750;cursor:pointer}.primary{background:var(--purple);color:#190c24}
+#details{white-space:pre-wrap;overflow-wrap:anywhere}.video-title{font-weight:750;font-size:17px;color:var(--text)}
+</style>
+</head>
+<body><main>
+<div class="logo">NF</div><h1>Nany Flow Videos</h1><p>Comprueba si hay un video nuevo y mira un resumen breve aquí mismo.</p>
+<div class="card">
+<div id="status" class="status">⚪ Todavía no comprobado</div>
+<div id="details">Pulsa el botón para consultar la publicación más reciente.</div>
+<button id="check" class="primary">Comprobar si hay video nuevo</button>
+<div id="note" class="small">Necesitas conexión a internet. La primera consulta guarda el video actual como referencia.</div>
+</div>
+<div class="card">
+<div class="small">ÚLTIMO VIDEO DETECTADO</div>
+<div id="latest" class="video-title">Aún no hay datos</div>
+<div id="date" class="small"></div>
+<div id="summary"></div>
+</div>
+<p class="small">La comprobación compara la publicación más reciente con la última consulta guardada en este navegador. El resumen usa la descripción pública del video, si está disponible.</p>
+</main>
+<script>
+const channelId = "UCKK30qHz_QedLF2D3o6TZPw";
+const statusEl = document.getElementById("status");
+const detailsEl = document.getElementById("details");
+const latestEl = document.getElementById("latest");
+const dateEl = document.getElementById("date");
+const summaryEl = document.getElementById("summary");
+const button = document.getElementById("check");
+let jsonpScript = null;
+function brief(text) {
+  if (!text) return "No hay descripción pública suficiente para resumir el contenido con más detalle.";
+  const box = document.createElement("div");
+  box.innerHTML = text;
+  text = (box.textContent || box.innerText || "").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  return text.length > 360 ? text.slice(0,357) + "..." : text;
+}
+function getFeedJsonp() {
+  return new Promise((resolve, reject) => {
+    const callbackName = "nanyFlowFeedCallback";
+    const old = document.getElementById("nany-flow-jsonp");
+    if (old) old.remove();
+    if (window[callbackName]) { try { delete window[callbackName]; } catch (_) {} }
+    let finished = false;
+    const finish = (err, data) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (jsonpScript) jsonpScript.remove();
+      try { delete window[callbackName]; } catch (_) { window[callbackName] = undefined; }
+      err ? reject(err) : resolve(data);
+    };
+    const timer = setTimeout(() => finish(new Error("La consulta tardó demasiado.")), 15000);
+    window[callbackName] = data => finish(null, data);
+    const feed = "https://www.youtube.com/feeds/videos.xml?channel_id=" + channelId;
+    jsonpScript = document.createElement("script");
+    jsonpScript.id = "nany-flow-jsonp";
+    // Try rss2json first; if it is unavailable, fall back to a CORS-enabled feed proxy.
+    jsonpScript.src = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(feed) + "&callback=" + callbackName;
+    jsonpScript.onerror = async () => {
+      try {
+        const proxyResponse = await fetch("https://proxy.cors.dev/" + feed, {cache:"no-store"});
+        if (!proxyResponse.ok) throw new Error("La fuente pública no respondió.");
+        const xmlText = await proxyResponse.text();
+        const xml = new DOMParser().parseFromString(xmlText, "application/xml");
+        if (xml.querySelector("parsererror")) throw new Error("La respuesta de YouTube no se pudo leer.");
+        const entries = Array.from(xml.getElementsByTagName("entry"));
+        const items = entries.map(entry => {
+          const get = tag => {
+            const el = entry.getElementsByTagName(tag)[0];
+            return el ? el.textContent : "";
+          };
+          const linkEl = entry.getElementsByTagName("link")[0];
+          const videoId = get("videoId") || get("yt:videoId");
+          return {
+            guid: videoId || get("id"),
+            title: get("title"),
+            link: (linkEl && linkEl.getAttribute("href")) || (videoId ? "https://www.youtube.com/watch?v=" + videoId : ""),
+            pubDate: get("published") || get("updated"),
+            description: get("description") || ""
+          };
+        });
+        finish(null, {status:"ok", items});
+      } catch (err) {
+        finish(new Error("Fallaron los dos métodos de consulta. " + (err.message || "")));
+      }
+    };
+    document.head.appendChild(jsonpScript);
+  });
+}
+async function check() {
+  button.disabled = true; button.textContent = "Consultando...";
+  statusEl.textContent = "⏳ Comprobando...";
+  detailsEl.textContent = "Consultando la fuente pública de videos de Nany Flow.";
+  try {
+    const data = await getFeedJsonp();
+    if (!data || data.status !== "ok") throw new Error((data && data.message) || "La fuente no devolvió datos válidos.");
+    if (!Array.isArray(data.items) || !data.items.length) throw new Error("La fuente no devolvió videos.");
+    const item = data.items[0];
+    const id = item.guid || item.link || item.title;
+    if (!id) throw new Error("La publicación no tiene un identificador válido.");
+    const previous = localStorage.getItem("nanyflow_last_video_id");
+    const first = !previous;
+    const isNew = !first && previous !== id;
+    localStorage.setItem("nanyflow_last_video_id", id);
+    latestEl.textContent = item.title || "Video reciente";
+    dateEl.textContent = item.pubDate ? "Publicado: " + new Date(item.pubDate).toLocaleString("es") : "";
+    summaryEl.textContent = "Resumen: " + brief(item.description || item.content);
+    if (first) {
+      statusEl.textContent = "🟣 Primera comprobación";
+      detailsEl.textContent = "La consulta funcionó. Guardé el video más reciente como referencia; desde la próxima comprobación podré detectar si aparece otro nuevo.";
+    } else if (isNew) {
+      statusEl.textContent = "✅ ¡SÍ, HAY VIDEO NUEVO!";
+      detailsEl.textContent = "Se detectó una publicación diferente desde tu última comprobación.";
+    } else {
+      statusEl.textContent = "❌ NO HAY VIDEO NUEVO";
+      detailsEl.textContent = "La consulta funcionó y no se detectó una publicación nueva desde la última comprobación.";
+    }
+    document.getElementById("note").textContent = "Consulta completada: " + new Date().toLocaleString("es");
+  } catch (e) {
+    statusEl.textContent = "⚠️ Error de consulta";
+    detailsEl.textContent = "No pude obtener datos fiables esta vez. Esto NO significa que no haya video nuevo. Comprueba tu conexión y vuelve a intentarlo. Detalle: " + (e && e.message ? e.message : "servicio no disponible");
+  } finally {
+    button.disabled = false; button.textContent = "Comprobar si hay video nuevo";
+  }
+}
+button.addEventListener("click", check);
+</script>
+</body></html>
